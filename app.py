@@ -103,27 +103,43 @@ def enhanced_textrazor_analysis(url, api_key):
         st.error("Clé API TextRazor manquante.")
         return None, None, None, None
     
-    textrazor.api_key = api_key
-    client = textrazor.TextRazor(extractors=["entities", "topics", "words", "phrases"])
-    client.set_cleanup_mode("cleanHTML")
-    client.set_cleanup_return_cleaned(True)
-    
     try:
+        textrazor.api_key = api_key
+        client = textrazor.TextRazor(extractors=["entities", "topics", "words", "phrases"])
+        client.set_cleanup_mode("cleanHTML")
+        client.set_cleanup_return_cleaned(True)
+        
         response = client.analyze_url(url)
-        if response.ok:
-            semantic_data = {
-                'topics': [topic.label for topic in response.topics()],
-                'entities': [(entity.id, entity.matched_text.count(entity.matched_text), 
-                            entity.relevance_score) for entity in response.entities()],
-                'phrases': [phrase.words for phrase in response.phrases()],
-                'sentiment_score': getattr(response, 'sentiment_score', 0)
-            }
-            return response.cleaned_text, semantic_data['topics'], semantic_data['entities'], semantic_data
-        else:
-            st.error(f"Erreur TextRazor : {response.error}")
-            return None, None, None, None
+        
+        # Extraire le texte nettoyé
+        cleaned_text = response.cleaned_text
+        
+        # Extraire les topics
+        topics = []
+        for topic in response.topics():
+            topics.append(topic.label)
+            
+        # Extraire les entités
+        entities = []
+        for entity in response.entities():
+            entities.append((
+                entity.id,
+                len([m for m in entity.matches if m.matched_text == entity.matched_text]),
+                entity.relevance_score
+            ))
+            
+        # Données sémantiques supplémentaires
+        semantic_data = {
+            'topics': topics,
+            'entities': entities,
+            'phrases': [p.words for p in response.noun_phrases()],
+            'sentiment_score': getattr(response, 'sentiment_score', 0)
+        }
+        
+        return cleaned_text, topics, entities, semantic_data
+        
     except Exception as e:
-        st.error(f"Erreur d'analyse TextRazor : {e}")
+        st.error(f"Erreur d'analyse TextRazor : {str(e)}")
         return None, None, None, None
 
 # Fonction pour l'analyse SERP
@@ -158,15 +174,16 @@ def analyze_serp(keyword, location, valueserp_api_key, textrazor_api_key, user_u
         all_topics = []
         all_entities = []
         
+        kw_extractor = yake.KeywordExtractor(
+            lan="fr",
+            n=3,
+            dedupLim=0.9,
+            top=20
+        )
+        
         for url in urls[:10]:  # Limiter à 10 URLs pour la performance
             text, topics, entities, _ = enhanced_textrazor_analysis(url, textrazor_api_key)
             if text:
-                kw_extractor = yake.KeywordExtractor(
-                    lan="fr",
-                    n=3,
-                    dedupLim=0.9,
-                    top=20
-                )
                 keywords = kw_extractor.extract_keywords(text)
                 all_keywords.extend(keywords)
                 if topics:
