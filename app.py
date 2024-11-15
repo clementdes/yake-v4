@@ -38,6 +38,11 @@ st.markdown("""
         text-align: center;
         padding: 1rem;
     }
+    .stAlert {
+        padding: 1rem;
+        margin-bottom: 1rem;
+        border-radius: 0.5rem;
+    }
     </style>
 """, unsafe_allow_html=True)
 
@@ -71,7 +76,6 @@ def generate_wordcloud(text):
     plt.imshow(wordcloud, interpolation='bilinear')
     plt.axis('off')
     
-    # Convertir le graphique en image
     buf = io.BytesIO()
     plt.savefig(buf, format='png')
     buf.seek(0)
@@ -107,7 +111,6 @@ def enhanced_textrazor_analysis(url, api_key):
     try:
         response = client.analyze_url(url)
         if response.ok:
-            # Analyse sémantique approfondie
             semantic_data = {
                 'topics': [topic.label for topic in response.topics()],
                 'entities': [(entity.id, entity.matched_text.count(entity.matched_text), 
@@ -123,12 +126,77 @@ def enhanced_textrazor_analysis(url, api_key):
         st.error(f"Erreur d'analyse TextRazor : {e}")
         return None, None, None, None
 
-# Fonction pour l'export des données
-def export_analysis_data(data, format='json'):
-    if format == 'json':
-        return json.dumps(data, ensure_ascii=False, indent=2)
-    elif format == 'csv':
-        return pd.DataFrame(data).to_csv(index=False)
+# Fonction pour l'analyse SERP
+def analyze_serp(keyword, location, valueserp_api_key, textrazor_api_key, user_url=None):
+    if not valueserp_api_key:
+        st.error("Clé API ValueSERP manquante.")
+        return None
+    
+    base_url = "https://api.valueserp.com/search"
+    params = {
+        "api_key": valueserp_api_key,
+        "q": keyword,
+        "location": location,
+        "num": 30,
+        "output": "json"
+    }
+    
+    try:
+        response = requests.get(base_url, params=params)
+        response.raise_for_status()
+        search_results = response.json()
+        
+        if 'organic_results' not in search_results:
+            st.error("Aucun résultat organique trouvé.")
+            return None
+            
+        results = search_results['organic_results']
+        urls = [result['link'] for result in results]
+        
+        # Analyse des URLs avec TextRazor
+        all_keywords = []
+        all_topics = []
+        all_entities = []
+        
+        for url in urls[:10]:  # Limiter à 10 URLs pour la performance
+            text, topics, entities, _ = enhanced_textrazor_analysis(url, textrazor_api_key)
+            if text:
+                kw_extractor = yake.KeywordExtractor(
+                    lan="fr",
+                    n=3,
+                    dedupLim=0.9,
+                    top=20
+                )
+                keywords = kw_extractor.extract_keywords(text)
+                all_keywords.extend(keywords)
+                if topics:
+                    all_topics.extend(topics)
+                if entities:
+                    all_entities.extend(entities)
+        
+        # Analyse de l'URL de l'utilisateur si fournie
+        user_data = None
+        if user_url:
+            user_text, user_topics, user_entities, _ = enhanced_textrazor_analysis(user_url, textrazor_api_key)
+            if user_text:
+                user_keywords = kw_extractor.extract_keywords(user_text)
+                user_data = {
+                    'keywords': user_keywords,
+                    'topics': user_topics,
+                    'entities': user_entities
+                }
+        
+        return {
+            'urls': urls,
+            'keywords': all_keywords,
+            'topics': all_topics,
+            'entities': all_entities,
+            'user_data': user_data
+        }
+        
+    except requests.RequestException as e:
+        st.error(f"Erreur lors de la requête SERP : {e}")
+        return None
 
 # Navigation principale
 st.sidebar.title("SEO Content Analyzer Pro")
@@ -146,7 +214,7 @@ with st.sidebar.expander("Configuration Globale"):
     min_char_length = st.number_input("Longueur min des mots-clés", 3, 10, 3)
     language = st.selectbox("Langue", ["fr", "en", "es", "de", "it"])
 
-# Page principale
+# Pages
 if page == "Analyse de Texte":
     st.title("Analyse de Texte Avancée")
     
@@ -156,7 +224,6 @@ if page == "Analyse de Texte":
     with col1:
         if st.button("Analyser le texte"):
             if text_input.strip():
-                # Analyse YAKE
                 kw_extractor = yake.KeywordExtractor(
                     lan=language,
                     n=3,
@@ -166,30 +233,118 @@ if page == "Analyse de Texte":
                 )
                 keywords = kw_extractor.extract_keywords(text_input)
                 
-                # Création du DataFrame
                 df = pd.DataFrame(keywords, columns=['Mot-clé', 'Score'])
                 df['Occurrences'] = df['Mot-clé'].apply(lambda x: text_input.lower().count(x.lower()))
                 
-                # Affichage des résultats
                 st.subheader("Résultats de l'analyse")
                 st.dataframe(df)
                 
-                # Visualisations
                 st.plotly_chart(create_keywords_chart(df))
                 
-                # Nuage de mots
                 wordcloud_image = generate_wordcloud(text_input)
                 st.image(wordcloud_image)
                 
-                # Sauvegarde dans l'historique
                 save_analysis_history({
                     'text': text_input[:200] + '...',
                     'keywords': df.to_dict('records')
                 }, 'text_analysis')
 
-# Continuer avec les autres pages...
-# Le reste du code reste identique à votre implémentation originale,
-# mais avec les nouvelles fonctionnalités intégrées.
+elif page == "Analyse d'URL":
+    st.title("Analyse d'URL")
+    textrazor_api_key = st.text_input("Clé API TextRazor", type="password")
+    url_input = st.text_input("Entrez l'URL à analyser:")
+    
+    if st.button("Analyser l'URL"):
+        if url_input and textrazor_api_key:
+            text, topics, entities, semantic_data = enhanced_textrazor_analysis(url_input, textrazor_api_key)
+            if text:
+                st.subheader("Contenu extrait")
+                st.write(text[:500] + "...")
+                
+                if topics:
+                    st.subheader("Topics identifiés")
+                    st.write(", ".join(topics))
+                
+                if entities:
+                    st.subheader("Entités identifiées")
+                    entities_df = pd.DataFrame(entities, columns=['Entité', 'Occurrences', 'Score'])
+                    st.dataframe(entities_df)
+                
+                save_analysis_history({
+                    'url': url_input,
+                    'topics': topics,
+                    'entities': entities
+                }, 'url_analysis')
+
+elif page == "Recherche SERP":
+    st.title("Analyse SERP")
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        valueserp_api_key = st.text_input("Clé API ValueSERP", type="password")
+        textrazor_api_key = st.text_input("Clé API TextRazor", type="password")
+    
+    with col2:
+        keyword = st.text_input("Mot-clé à analyser:")
+        location = st.text_input("Localisation (ex: France):")
+        user_url = st.text_input("Votre URL (optionnel):")
+    
+    if st.button("Analyser les SERP"):
+        if keyword and location and valueserp_api_key and textrazor_api_key:
+            with st.spinner("Analyse en cours..."):
+                results = analyze_serp(keyword, location, valueserp_api_key, textrazor_api_key, user_url)
+                
+                if results:
+                    st.subheader("URLs analysées")
+                    st.write(results['urls'])
+                    
+                    if results['keywords']:
+                        st.subheader("Mots-clés principaux")
+                        keywords_df = pd.DataFrame(results['keywords'], columns=['Mot-clé', 'Score'])
+                        st.dataframe(keywords_df)
+                        
+                        st.plotly_chart(create_keywords_chart(keywords_df))
+                    
+                    if results['topics']:
+                        st.subheader("Topics principaux")
+                        topics_counter = Counter(results['topics'])
+                        topics_df = pd.DataFrame(topics_counter.most_common(), columns=['Topic', 'Occurrences'])
+                        st.dataframe(topics_df)
+                    
+                    if results['user_data']:
+                        st.subheader("Analyse de votre URL")
+                        st.write("Comparaison avec les concurrents")
+                        
+                        user_keywords_df = pd.DataFrame(results['user_data']['keywords'], columns=['Mot-clé', 'Score'])
+                        st.dataframe(user_keywords_df)
+                    
+                    save_analysis_history({
+                        'keyword': keyword,
+                        'location': location,
+                        'results': results
+                    }, 'serp_analysis')
+
+elif page == "Historique des Analyses":
+    st.title("Historique des Analyses")
+    
+    if 'analysis_history' in st.session_state and st.session_state.analysis_history:
+        for entry in st.session_state.analysis_history:
+            with st.expander(f"{entry['type']} - {entry['date']}"):
+                st.json(entry['data'])
+    else:
+        st.info("Aucun historique d'analyse disponible.")
+
+elif page == "Configuration":
+    st.title("Configuration")
+    
+    st.subheader("APIs")
+    valueserp_api_key = st.text_input("Clé API ValueSERP par défaut", type="password")
+    textrazor_api_key = st.text_input("Clé API TextRazor par défaut", type="password")
+    
+    if st.button("Sauvegarder la configuration"):
+        st.session_state.valueserp_api_key = valueserp_api_key
+        st.session_state.textrazor_api_key = textrazor_api_key
+        st.success("Configuration sauvegardée avec succès!")
 
 if __name__ == "__main__":
     st.sidebar.markdown("---")
