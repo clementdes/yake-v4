@@ -1,20 +1,11 @@
 import streamlit as st
-import yake
-import nltk
-from nltk.corpus import stopwords
 import pandas as pd
-import os
-import textrazor
-import requests
-from collections import Counter
-import plotly.express as px
-import plotly.graph_objects as go
-from wordcloud import WordCloud
-import matplotlib.pyplot as plt
-import io
-import base64
 from datetime import datetime
-import json
+import os
+import nltk
+from utils.text_analysis import extract_keywords, analyze_text_with_textrazor
+from utils.serp_analysis import analyze_serp_results
+from utils.visualization import create_keywords_chart, generate_wordcloud
 
 # Configuration de la page
 st.set_page_config(
@@ -26,23 +17,10 @@ st.set_page_config(
 # Styles CSS personnalisés
 st.markdown("""
     <style>
-    .main {
-        padding: 2rem;
-    }
-    .stButton>button {
-        width: 100%;
-        margin-top: 1rem;
-    }
-    .reportTitle {
-        color: #1f77b4;
-        text-align: center;
-        padding: 1rem;
-    }
-    .stAlert {
-        padding: 1rem;
-        margin-bottom: 1rem;
-        border-radius: 0.5rem;
-    }
+    .main { padding: 2rem; }
+    .stButton>button { width: 100%; margin-top: 1rem; }
+    .reportTitle { color: #1f77b4; text-align: center; padding: 1rem; }
+    .stAlert { padding: 1rem; margin-bottom: 1rem; border-radius: 0.5rem; }
     </style>
 """, unsafe_allow_html=True)
 
@@ -69,152 +47,6 @@ def save_analysis_history(data, analysis_type):
     }
     st.session_state.analysis_history.append(history_entry)
 
-# Fonction pour générer un nuage de mots
-def generate_wordcloud(text):
-    wordcloud = WordCloud(width=800, height=400, background_color='white').generate(text)
-    plt.figure(figsize=(10, 5))
-    plt.imshow(wordcloud, interpolation='bilinear')
-    plt.axis('off')
-    
-    buf = io.BytesIO()
-    plt.savefig(buf, format='png')
-    buf.seek(0)
-    return buf
-
-# Fonction pour créer un graphique interactif des mots-clés
-def create_keywords_chart(df, top_n=20):
-    df_sorted = df.sort_values('Nombre d\'occurrences total', ascending=True).tail(top_n)
-    fig = go.Figure(go.Bar(
-        x=df_sorted['Nombre d\'occurrences total'],
-        y=df_sorted['Mot Yake'],
-        orientation='h'
-    ))
-    fig.update_layout(
-        title='Top ' + str(top_n) + ' mots-clés par nombre d\'occurrences',
-        xaxis_title='Nombre d\'occurrences',
-        yaxis_title='Mots-clés',
-        height=600
-    )
-    return fig
-
-# Fonction améliorée pour l'analyse TextRazor
-def enhanced_textrazor_analysis(url, api_key):
-    if not api_key:
-        st.error("Clé API TextRazor manquante.")
-        return None, None, None, None
-    
-    try:
-        textrazor.api_key = api_key
-        client = textrazor.TextRazor(extractors=["entities", "topics", "words", "phrases"])
-        client.set_cleanup_mode("cleanHTML")
-        client.set_cleanup_return_cleaned(True)
-        
-        response = client.analyze_url(url)
-        
-        # Extraire le texte nettoyé
-        cleaned_text = response.cleaned_text
-        
-        # Extraire les topics
-        topics = []
-        for topic in response.topics():
-            topics.append(topic.label)
-            
-        # Extraire les entités
-        entities = []
-        for entity in response.entities():
-            entities.append((
-                entity.id,
-                len([m for m in entity.matches if m.matched_text == entity.matched_text]),
-                entity.relevance_score
-            ))
-            
-        # Données sémantiques supplémentaires
-        semantic_data = {
-            'topics': topics,
-            'entities': entities,
-            'phrases': [p.words for p in response.noun_phrases()],
-            'sentiment_score': getattr(response, 'sentiment_score', 0)
-        }
-        
-        return cleaned_text, topics, entities, semantic_data
-        
-    except Exception as e:
-        st.error(f"Erreur d'analyse TextRazor : {str(e)}")
-        return None, None, None, None
-
-# Fonction pour l'analyse SERP
-def analyze_serp(keyword, location, valueserp_api_key, textrazor_api_key, user_url=None):
-    if not valueserp_api_key:
-        st.error("Clé API ValueSERP manquante.")
-        return None
-    
-    base_url = "https://api.valueserp.com/search"
-    params = {
-        "api_key": valueserp_api_key,
-        "q": keyword,
-        "location": location,
-        "num": 30,
-        "output": "json"
-    }
-    
-    try:
-        response = requests.get(base_url, params=params)
-        response.raise_for_status()
-        search_results = response.json()
-        
-        if 'organic_results' not in search_results:
-            st.error("Aucun résultat organique trouvé.")
-            return None
-            
-        results = search_results['organic_results']
-        urls = [result['link'] for result in results]
-        
-        # Analyse des URLs avec TextRazor
-        all_keywords = []
-        all_topics = []
-        all_entities = []
-        
-        kw_extractor = yake.KeywordExtractor(
-            lan="fr",
-            n=3,
-            dedupLim=0.9,
-            top=20
-        )
-        
-        for url in urls[:10]:  # Limiter à 10 URLs pour la performance
-            text, topics, entities, _ = enhanced_textrazor_analysis(url, textrazor_api_key)
-            if text:
-                keywords = kw_extractor.extract_keywords(text)
-                all_keywords.extend(keywords)
-                if topics:
-                    all_topics.extend(topics)
-                if entities:
-                    all_entities.extend(entities)
-        
-        # Analyse de l'URL de l'utilisateur si fournie
-        user_data = None
-        if user_url:
-            user_text, user_topics, user_entities, _ = enhanced_textrazor_analysis(user_url, textrazor_api_key)
-            if user_text:
-                user_keywords = kw_extractor.extract_keywords(user_text)
-                user_data = {
-                    'keywords': user_keywords,
-                    'topics': user_topics,
-                    'entities': user_entities
-                }
-        
-        return {
-            'urls': urls,
-            'keywords': all_keywords,
-            'topics': all_topics,
-            'entities': all_entities,
-            'user_data': user_data
-        }
-        
-    except requests.RequestException as e:
-        st.error(f"Erreur lors de la requête SERP : {e}")
-        return None
-
 # Navigation principale
 st.sidebar.title("SEO Content Analyzer Pro")
 page = st.sidebar.radio("Navigation", [
@@ -225,7 +57,7 @@ page = st.sidebar.radio("Navigation", [
     "Configuration"
 ])
 
-# Configuration globale dans la sidebar
+# Configuration globale
 with st.sidebar.expander("Configuration Globale"):
     max_keywords = st.number_input("Nombre max de mots-clés", 10, 200, 100)
     min_char_length = st.number_input("Longueur min des mots-clés", 3, 10, 3)
@@ -236,35 +68,25 @@ if page == "Analyse de Texte":
     st.title("Analyse de Texte Avancée")
     
     text_input = st.text_area("Entrez votre texte ici:", height=200)
-    col1, col2 = st.columns(2)
     
-    with col1:
-        if st.button("Analyser le texte"):
-            if text_input.strip():
-                kw_extractor = yake.KeywordExtractor(
-                    lan=language,
-                    n=3,
-                    dedupLim=0.9,
-                    top=max_keywords,
-                    features=None
-                )
-                keywords = kw_extractor.extract_keywords(text_input)
-                
-                df = pd.DataFrame(keywords, columns=['Mot-clé', 'Score'])
-                df['Occurrences'] = df['Mot-clé'].apply(lambda x: text_input.lower().count(x.lower()))
-                
-                st.subheader("Résultats de l'analyse")
-                st.dataframe(df)
-                
-                st.plotly_chart(create_keywords_chart(df))
-                
-                wordcloud_image = generate_wordcloud(text_input)
-                st.image(wordcloud_image)
-                
-                save_analysis_history({
-                    'text': text_input[:200] + '...',
-                    'keywords': df.to_dict('records')
-                }, 'text_analysis')
+    if st.button("Analyser le texte"):
+        if text_input.strip():
+            keywords_df = extract_keywords(text_input, language, max_keywords)
+            
+            st.subheader("Résultats de l'analyse")
+            st.dataframe(keywords_df)
+            
+            chart = create_keywords_chart(keywords_df)
+            if chart:
+                st.plotly_chart(chart)
+            
+            wordcloud_image = generate_wordcloud(text_input)
+            st.image(wordcloud_image)
+            
+            save_analysis_history({
+                'text': text_input[:200] + '...',
+                'keywords': keywords_df.to_dict('records')
+            }, 'text_analysis')
 
 elif page == "Analyse d'URL":
     st.title("Analyse d'URL")
@@ -273,7 +95,7 @@ elif page == "Analyse d'URL":
     
     if st.button("Analyser l'URL"):
         if url_input and textrazor_api_key:
-            text, topics, entities, semantic_data = enhanced_textrazor_analysis(url_input, textrazor_api_key)
+            text, topics, entities_df = analyze_text_with_textrazor(url_input, textrazor_api_key, is_url=True)
             if text:
                 st.subheader("Contenu extrait")
                 st.write(text[:500] + "...")
@@ -282,15 +104,14 @@ elif page == "Analyse d'URL":
                     st.subheader("Topics identifiés")
                     st.write(", ".join(topics))
                 
-                if entities:
+                if not entities_df.empty:
                     st.subheader("Entités identifiées")
-                    entities_df = pd.DataFrame(entities, columns=['Entité', 'Occurrences', 'Score'])
                     st.dataframe(entities_df)
                 
                 save_analysis_history({
                     'url': url_input,
                     'topics': topics,
-                    'entities': entities
+                    'entities': entities_df.to_dict('records')
                 }, 'url_analysis')
 
 elif page == "Recherche SERP":
@@ -309,7 +130,7 @@ elif page == "Recherche SERP":
     if st.button("Analyser les SERP"):
         if keyword and location and valueserp_api_key and textrazor_api_key:
             with st.spinner("Analyse en cours..."):
-                results = analyze_serp(keyword, location, valueserp_api_key, textrazor_api_key, user_url)
+                results = analyze_serp_results(keyword, location, valueserp_api_key, textrazor_api_key, user_url)
                 
                 if results:
                     st.subheader("URLs analysées")
@@ -317,10 +138,12 @@ elif page == "Recherche SERP":
                     
                     if results['keywords']:
                         st.subheader("Mots-clés principaux")
-                        keywords_df = pd.DataFrame(results['keywords'], columns=['Mot-clé', 'Score'])
+                        keywords_df = pd.DataFrame(results['keywords'])
                         st.dataframe(keywords_df)
                         
-                        st.plotly_chart(create_keywords_chart(keywords_df))
+                        chart = create_keywords_chart(keywords_df)
+                        if chart:
+                            st.plotly_chart(chart)
                     
                     if results['topics']:
                         st.subheader("Topics principaux")
@@ -331,8 +154,7 @@ elif page == "Recherche SERP":
                     if results['user_data']:
                         st.subheader("Analyse de votre URL")
                         st.write("Comparaison avec les concurrents")
-                        
-                        user_keywords_df = pd.DataFrame(results['user_data']['keywords'], columns=['Mot-clé', 'Score'])
+                        user_keywords_df = pd.DataFrame(results['user_data']['keywords'])
                         st.dataframe(user_keywords_df)
                     
                     save_analysis_history({
