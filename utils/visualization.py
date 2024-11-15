@@ -9,12 +9,33 @@ def create_keywords_chart(keywords_data, top_n=20):
     if isinstance(keywords_data, list):
         df = pd.DataFrame(keywords_data)
     else:
-        df = keywords_data
+        df = keywords_data.copy()
     
-    # Assurer que les colonnes existent
-    if 'keyword' not in df.columns or 'occurrences' not in df.columns:
-        return None
-        
+    # Adapter les noms de colonnes selon la source des données
+    if 'total_occurrences' in df.columns:
+        df = df.rename(columns={'total_occurrences': 'occurrences', 'keyword': 'keyword'})
+    elif 'Nombre d\'occurrences total' in df.columns:
+        df = df.rename(columns={'Nombre d\'occurrences total': 'occurrences', 'Mot Yake': 'keyword'})
+    
+    # Vérifier que les colonnes nécessaires existent
+    required_columns = {'keyword', 'occurrences'}
+    if not all(col in df.columns for col in required_columns):
+        print("Colonnes manquantes:", required_columns - set(df.columns))
+        # Créer un graphique vide plutôt que de retourner None
+        fig = go.Figure()
+        fig.update_layout(
+            title='Données insuffisantes pour générer le graphique',
+            annotations=[{
+                'text': 'Données manquantes',
+                'xref': 'paper',
+                'yref': 'paper',
+                'showarrow': False,
+                'font': {'size': 20}
+            }]
+        )
+        return fig
+    
+    # Trier et sélectionner les top_n mots-clés
     df_sorted = df.sort_values('occurrences', ascending=True).tail(top_n)
     
     fig = go.Figure(go.Bar(
@@ -27,7 +48,8 @@ def create_keywords_chart(keywords_data, top_n=20):
         title=f'Top {top_n} mots-clés par nombre d\'occurrences',
         xaxis_title='Nombre d\'occurrences',
         yaxis_title='Mots-clés',
-        height=600
+        height=600,
+        showlegend=False
     )
     
     return fig
