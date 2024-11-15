@@ -3,6 +3,7 @@ import pandas as pd
 from datetime import datetime
 import os
 import nltk
+from collections import Counter
 from utils.text_analysis import extract_keywords, analyze_text_with_textrazor
 from utils.serp_analysis import analyze_serp_results
 from utils.visualization import create_keywords_chart, generate_wordcloud
@@ -21,6 +22,13 @@ st.markdown("""
     .stButton>button { width: 100%; margin-top: 1rem; }
     .reportTitle { color: #1f77b4; text-align: center; padding: 1rem; }
     .stAlert { padding: 1rem; margin-bottom: 1rem; border-radius: 0.5rem; }
+    .metric-card {
+        background-color: #f8f9fa;
+        padding: 1rem;
+        border-radius: 0.5rem;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.12);
+        margin-bottom: 1rem;
+    }
     </style>
 """, unsafe_allow_html=True)
 
@@ -129,33 +137,65 @@ elif page == "Recherche SERP":
     
     if st.button("Analyser les SERP"):
         if keyword and location and valueserp_api_key and textrazor_api_key:
-            with st.spinner("Analyse en cours..."):
+            with st.spinner("Analyse en cours... Cela peut prendre quelques minutes."):
                 results = analyze_serp_results(keyword, location, valueserp_api_key, textrazor_api_key, user_url)
                 
                 if results:
-                    st.subheader("URLs analysées")
-                    st.write(results['urls'])
+                    # Affichage des URLs
+                    with st.expander("URLs analysées", expanded=True):
+                        for i, url in enumerate(results['urls'][:10], 1):
+                            st.write(f"{i}. {url}")
                     
+                    # Analyse des mots-clés
                     if results['keywords']:
-                        st.subheader("Mots-clés principaux")
+                        st.subheader("Analyse des mots-clés")
                         keywords_df = pd.DataFrame(results['keywords'])
+                        
+                        col1, col2, col3 = st.columns(3)
+                        with col1:
+                            st.metric("Nombre total de mots-clés", len(keywords_df))
+                        with col2:
+                            avg_occurrences = keywords_df['total_occurrences'].mean()
+                            st.metric("Moyenne d'occurrences", f"{avg_occurrences:.1f}")
+                        with col3:
+                            avg_urls = keywords_df['urls_count'].mean()
+                            st.metric("Moyenne d'URLs par mot-clé", f"{avg_urls:.1f}")
+                        
                         st.dataframe(keywords_df)
                         
                         chart = create_keywords_chart(keywords_df)
                         if chart:
                             st.plotly_chart(chart)
                     
+                    # Analyse des topics
                     if results['topics']:
                         st.subheader("Topics principaux")
-                        topics_counter = Counter(results['topics'])
-                        topics_df = pd.DataFrame(topics_counter.most_common(), columns=['Topic', 'Occurrences'])
+                        topics_df = pd.DataFrame(results['topics'])
                         st.dataframe(topics_df)
                     
+                    # Analyse des entités
+                    if results['entities']:
+                        st.subheader("Entités identifiées")
+                        entities_df = pd.DataFrame(results['entities'])
+                        st.dataframe(entities_df)
+                    
+                    # Analyse comparative avec l'URL de l'utilisateur
                     if results['user_data']:
-                        st.subheader("Analyse de votre URL")
-                        st.write("Comparaison avec les concurrents")
-                        user_keywords_df = pd.DataFrame(results['user_data']['keywords'])
-                        st.dataframe(user_keywords_df)
+                        st.subheader("Analyse comparative de votre URL")
+                        user_data = results['user_data']
+                        
+                        # Mots-clés de l'URL utilisateur
+                        if user_data['keywords']:
+                            st.write("Mots-clés de votre page")
+                            user_keywords_df = pd.DataFrame(user_data['keywords'])
+                            st.dataframe(user_keywords_df)
+                            
+                            # Comparaison avec les concurrents
+                            common_keywords = set(user_keywords_df['keyword']).intersection(
+                                set(pd.DataFrame(results['keywords'])['keyword'])
+                            )
+                            st.write(f"Mots-clés en commun avec les concurrents: {len(common_keywords)}")
+                            st.write(", ".join(common_keywords))
                     
                     save_analysis_history({
                         'keyword': keyword,
