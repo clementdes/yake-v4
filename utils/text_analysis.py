@@ -16,6 +16,7 @@ def extract_keywords(text, language="fr", max_keywords=20):
     # Créer le DataFrame avec les bonnes colonnes
     df = pd.DataFrame(keywords, columns=['keyword', 'score'])
     df['occurrences'] = df['keyword'].apply(lambda x: text.lower().count(x.lower()))
+    df['occurrences_per_1000_words'] = df['occurrences'] * 1000 / len(text.split())
     return df
 
 def analyze_text_with_textrazor(text_or_url, api_key, is_url=False):
