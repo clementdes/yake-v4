@@ -110,13 +110,21 @@ def analyze_serp_results(keyword, location, valueserp_api_key, textrazor_api_key
                 'total_occurrences': kw['occurrences'],
                 'urls_count': sum(1 for r in analyzed_results if any(k['keyword'] == kw['keyword'] for k in r['keywords']))
             })
-        
-        # Créer les DataFrames
-        keywords_df = pd.DataFrame(keywords_data).groupby('keyword').agg({
+
+        # Créer le DataFrame initial
+        df = pd.DataFrame(keywords_data)
+
+        # Créer le DataFrame avec les agrégations de base
+        keywords_df = df.groupby('keyword').agg({
             'avg_score': 'mean',
             'total_occurrences': 'sum',
             'urls_count': 'max'
         }).reset_index()
+
+        # Ajouter les statistiques supplémentaires
+        keywords_df['min_occurrences'] = df.groupby('keyword')['total_occurrences'].min()
+        keywords_df['max_occurrences'] = df.groupby('keyword')['total_occurrences'].max()
+        keywords_df['std_occurrences'] = df.groupby('keyword')['total_occurrences'].std()
         
         topics_data = []
         for topic in set(all_topics):
