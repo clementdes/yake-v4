@@ -218,8 +218,9 @@ elif page == "Recherche SERP":
                 
                 # Mots-clés globaux
                 if results['keywords']:
-                    st.subheader("Analyse globale des mots-clés")
+                    st.subheader("Analyse globale des mots-clés Yake")
                     keywords_df = pd.DataFrame(results['keywords'])
+                    st.write("Note: total_occurrences représente le nombre total de fois où le mot-clé apparaît dans l'ensemble des URLs du top 10 des résultats Google")
                     st.dataframe(keywords_df)
                     
                     # Visualisation des mots-clés
